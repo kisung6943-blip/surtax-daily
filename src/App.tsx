@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { supabase } from "./lib/supabase";
 import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
@@ -48,6 +49,7 @@ export default function App() {
   const [activeCompanyId, setActiveCompanyId] = useState<string>("");
   const [data, setData] = useState<MonthData[]>(getInitialData());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Initial Authentication Check
   React.useEffect(() => {
@@ -76,91 +78,150 @@ export default function App() {
   const [newExpAmount, setNewExpAmount] = useState("");
   const [newExpDay, setNewExpDay] = useState(new Date().getDate().toString().padStart(2, '0'));
 
-  // Initial Load (Companies and Data)
-  React.useEffect(() => {
-    try {
-      const savedCompanies = localStorage.getItem("surtax_daily_companies");
-      const savedActiveId = localStorage.getItem("surtax_daily_active_id");
-      
-      let loadedCompanies: Company[] = [];
-      if (savedCompanies) {
-        loadedCompanies = JSON.parse(savedCompanies);
-      }
-
-      if (loadedCompanies.length === 0) {
-        const defaultId = "company_" + Date.now();
-        loadedCompanies = [{ id: defaultId, name: "신규 업체" }];
-      }
-
-      setCompanies(loadedCompanies);
-      setActiveCompanyId(savedActiveId && loadedCompanies.find(c => c.id === savedActiveId) ? savedActiveId : loadedCompanies[0].id);
-    } catch (e) {
-      console.error("Initial load failed", e);
-    }
-  }, []);
-
-  // Save Companies List
-  React.useEffect(() => {
-    if (companies.length > 0) {
-      localStorage.setItem("surtax_daily_companies", JSON.stringify(companies));
-    }
-  }, [companies]);
-
-  // Load/Save Data for Active Company
-  React.useEffect(() => {
-    if (!activeCompanyId) return;
-    
-    localStorage.setItem("surtax_daily_active_id", activeCompanyId);
-    const savedData = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
-    if (savedData) {
+  // Initial Load (Companies from Supabase)
+  useEffect(() => {
+    const fetchCompanies = async () => {
+      setIsLoading(true);
       try {
-        setData(JSON.parse(savedData));
+        const { data: dbCompanies, error } = await supabase
+          .from('surtax_daily_companies')
+          .select('*')
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        if (dbCompanies && dbCompanies.length > 0) {
+          setCompanies(dbCompanies);
+          const savedActiveId = localStorage.getItem("surtax_daily_active_id");
+          setActiveCompanyId(savedActiveId && dbCompanies.find((c: any) => c.id === savedActiveId) ? savedActiveId : dbCompanies[0].id);
+        } else {
+          // Create default company if none exists
+          const defaultId = "company_" + Date.now();
+          const newCompany = { id: defaultId, name: "신규 업체" };
+          const { error: insertError } = await supabase.from('surtax_daily_companies').insert([newCompany]);
+          if (!insertError) {
+            setCompanies([newCompany]);
+            setActiveCompanyId(defaultId);
+          }
+        }
       } catch (e) {
+        console.error("Fetch companies failed", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (isAuthenticated) {
+      fetchCompanies();
+    }
+  }, [isAuthenticated]);
+
+  // Load/Save Data for Active Company (Supabase)
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!activeCompanyId) return;
+      
+      localStorage.setItem("surtax_daily_active_id", activeCompanyId);
+      try {
+        const { data: dbData, error } = await supabase
+          .from('surtax_daily_data')
+          .select('month_data')
+          .eq('company_id', activeCompanyId)
+          .single();
+
+        if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
+
+        if (dbData) {
+          setData(dbData.month_data);
+        } else {
+          setData(getInitialData());
+        }
+      } catch (e) {
+        console.error("Fetch data failed", e);
         setData(getInitialData());
       }
-    } else {
-      setData(getInitialData());
-    }
-  }, [activeCompanyId]);
+    };
 
-  React.useEffect(() => {
-    if (activeCompanyId) {
-      localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(data));
+    if (isAuthenticated) {
+      fetchData();
     }
-  }, [data, activeCompanyId]);
+  }, [activeCompanyId, isAuthenticated]);
 
-  const handleAddCompany = () => {
+  // Auto-save data to Supabase when it changes
+  useEffect(() => {
+    const saveData = async () => {
+      if (!activeCompanyId || !isAuthenticated) return;
+      
+      try {
+        await supabase
+          .from('surtax_daily_data')
+          .upsert({ 
+            company_id: activeCompanyId, 
+            month_data: data,
+            updated_at: new Date().toISOString()
+          });
+      } catch (e) {
+        console.error("Save data failed", e);
+      }
+    };
+
+    const timeoutId = setTimeout(saveData, 1000); // Debounce saves
+    return () => clearTimeout(timeoutId);
+  }, [data, activeCompanyId, isAuthenticated]);
+
+  const handleAddCompany = async () => {
     const name = window.prompt("새 업체 이름을 입력하세요:");
     if (name && name.trim()) {
       const newId = "company_" + Date.now();
       const newCompany = { id: newId, name: name.trim() };
-      setCompanies(prev => [...prev, newCompany]);
-      setActiveCompanyId(newId);
+      
+      try {
+        const { error } = await supabase.from('surtax_daily_companies').insert([newCompany]);
+        if (error) throw error;
+        setCompanies(prev => [...prev, newCompany]);
+        setActiveCompanyId(newId);
+      } catch (e) {
+        alert("업체 추가에 실패했습니다.");
+      }
     }
   };
 
-  const handleRenameCompany = (id: string, newName: string) => {
+  const handleRenameCompany = async (id: string, newName: string) => {
     setCompanies(prev => prev.map(c => c.id === id ? { ...c, name: newName } : c));
+    try {
+      await supabase.from('surtax_daily_companies').update({ name: newName }).eq('id', id);
+    } catch (e) {
+      console.error("Rename failed", e);
+    }
   };
 
-  const handleDeleteCompany = () => {
+  const handleDeleteCompany = async () => {
     if (companies.length <= 1) {
       alert("최소 한 개의 업체는 유지해야 합니다.");
       return;
     }
     const currentCompany = companies.find(c => c.id === activeCompanyId);
     if (window.confirm(`'${currentCompany?.name}' 업체의 모든 데이터를 삭제하시겠습니까?`)) {
-      const remaining = companies.filter(c => c.id !== activeCompanyId);
-      localStorage.removeItem(`surtax_daily_data_${activeCompanyId}`);
-      setCompanies(remaining);
-      setActiveCompanyId(remaining[0].id);
+      try {
+        const { error } = await supabase.from('surtax_daily_companies').delete().eq('id', activeCompanyId);
+        if (error) throw error;
+        const remaining = companies.filter(c => c.id !== activeCompanyId);
+        setCompanies(remaining);
+        setActiveCompanyId(remaining[0].id);
+      } catch (e) {
+        alert("삭제에 실패했습니다.");
+      }
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     if (window.confirm("현재 업체의 모든 데이터를 초기화하시겠습니까?")) {
       setData(getInitialData());
-      localStorage.removeItem(`surtax_daily_data_${activeCompanyId}`);
+      try {
+        await supabase.from('surtax_daily_data').delete().eq('company_id', activeCompanyId);
+      } catch (e) {
+        console.error("Reset failed", e);
+      }
     }
   };
 
