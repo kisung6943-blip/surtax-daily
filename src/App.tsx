@@ -413,49 +413,19 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-4">
               <h1 className="text-3xl font-black tracking-tight text-slate-900 whitespace-nowrap">일별 매출/매입 장부</h1>
               
-              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
-                <select 
-                  value={activeCompanyId}
-                  onChange={(e) => setActiveCompanyId(e.target.value)}
-                  className="pl-4 pr-8 py-2 text-lg font-bold text-blue-600 bg-transparent focus:outline-none appearance-none cursor-pointer"
-                >
-                  {companies.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-                <div className="h-8 w-[1px] bg-slate-100 mx-1"></div>
-                <button 
-                  onClick={handleAddCompany}
-                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-                >
-                  <Plus className="w-6 h-6" />
-                </button>
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl px-4 py-2 shadow-sm">
+                <span className="text-lg font-bold text-blue-600">(ES)</span>
               </div>
 
-              {activeCompanyId && (
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="text" 
-                    value={companies.find(c => c.id === activeCompanyId)?.name || ""}
-                    onChange={(e) => handleRenameCompany(activeCompanyId, e.target.value)}
-                    className="text-sm font-medium text-slate-400 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 focus:outline-none transition-all px-1 w-32"
-                    placeholder="업체명 수정"
-                  />
-                  <button 
-                    onClick={handleDeleteCompany}
-                    className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  <button 
-                    onClick={handleLogout}
-                    className="p-1.5 text-slate-300 hover:text-blue-500 transition-colors ml-2"
-                    title="잠금"
-                  >
-                    <Unlock className="w-5 h-5" />
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleLogout}
+                  className="p-1.5 text-slate-300 hover:text-blue-500 transition-colors ml-2"
+                  title="잠금"
+                >
+                  <Unlock className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <p className="text-slate-500 mt-2">일별 매출 내역(계산서/현금영수증/기타)을 상세하게 기록하세요.</p>
           </div>
