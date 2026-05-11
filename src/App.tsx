@@ -52,6 +52,7 @@ export default function App() {
   const [data, setData] = useState<MonthData[]>(getInitialData());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [isLoading, setIsLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
 
   // Initial Authentication Check
   React.useEffect(() => {
@@ -89,6 +90,7 @@ export default function App() {
   useEffect(() => {
     const fetchCompanies = async () => {
       setIsLoading(true);
+      setSyncStatus('syncing');
       try {
         const { data: dbCompanies, error } = await supabase
           .from('surtax_daily_companies')
@@ -111,8 +113,10 @@ export default function App() {
             setActiveCompanyId(defaultId);
           }
         }
+        setSyncStatus('done');
       } catch (e) {
         console.error("Fetch companies failed", e);
+        setSyncStatus('error');
       } finally {
         setIsLoading(false);
       }
@@ -128,6 +132,7 @@ export default function App() {
     const fetchData = async () => {
       if (!activeCompanyId) return;
       
+      setSyncStatus('syncing');
       localStorage.setItem("surtax_daily_active_id", activeCompanyId);
       try {
         const { data: dbData, error } = await supabase
@@ -148,10 +153,18 @@ export default function App() {
           }));
           setData(migratedData);
         } else {
-          setData(getInitialData());
+          // Fallback to local storage if available for this company
+          const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+          if (localSaved) {
+            setData(JSON.parse(localSaved));
+          } else {
+            setData(getInitialData());
+          }
         }
+        setSyncStatus('done');
       } catch (e) {
         console.error("Fetch data failed", e);
+        setSyncStatus('error');
         setData(getInitialData());
       }
     };
@@ -164,24 +177,32 @@ export default function App() {
   // Auto-save data to Supabase when it changes
   useEffect(() => {
     const saveData = async () => {
-      if (!activeCompanyId || !isAuthenticated) return;
+      if (!activeCompanyId || !isAuthenticated || isLoading) return;
       
+      setSyncStatus('syncing');
       try {
-        await supabase
+        // Save to LocalStorage first for immediate persist
+        localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(data));
+
+        const { error } = await supabase
           .from('surtax_daily_data')
           .upsert({ 
             company_id: activeCompanyId, 
             month_data: data,
             updated_at: new Date().toISOString()
           });
+
+        if (error) throw error;
+        setSyncStatus('done');
       } catch (e) {
         console.error("Save data failed", e);
+        setSyncStatus('error');
       }
     };
 
-    const timeoutId = setTimeout(saveData, 1000); // Debounce saves
+    const timeoutId = setTimeout(saveData, 1500); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [data, activeCompanyId, isAuthenticated]);
+  }, [data, activeCompanyId, isAuthenticated, isLoading]);
 
   const handleAddCompany = async () => {
     const name = window.prompt("새 업체 이름을 입력하세요:");
@@ -388,7 +409,6 @@ export default function App() {
   const yearlyPurchase = useMemo(() => data.reduce((sum, m) => sum + calculateTotalExpense(m.purchases || []), 0), [data]);
   const yearlyExpenditure = useMemo(() => data.reduce((sum, m) => sum + calculateTotalExpense(m.expenditures || []), 0), [data]);
   const yearlyNetProfit = yearlyRevenue - yearlyPurchase - yearlyExpenditure;
-  const yearlyPurchaseRatio = yearlyRevenue > 0 ? (yearlyPurchase / yearlyRevenue) * 100 : 0;
 
   const chartData = useMemo(() => data.map(m => ({
     month: m.month,
@@ -401,7 +421,6 @@ export default function App() {
   const currentMonthRevenue = calculateTotalRevenue(currentMonthData.revenues || []);
   const currentMonthPurchaseTotal = calculateTotalExpense(currentMonthData.purchases || []);
   const currentMonthExpenditureTotal = calculateTotalExpense(currentMonthData.expenditures || []);
-  const currentMonthPurchaseRatio = currentMonthRevenue > 0 ? (currentMonthPurchaseTotal / currentMonthRevenue) * 100 : 0;
 
   if (!isAuthenticated) {
     return (
@@ -479,7 +498,24 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <p className="text-slate-500 mt-2">일별 매출 내역(계산서/현금영수증/기타)을 상세하게 기록하세요.</p>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-slate-500">일별 매출 내역(계산서/현금영수증/기타)을 상세하게 기록하세요.</p>
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black border transition-all ${
+                syncStatus === 'syncing' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                syncStatus === 'done' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+                syncStatus === 'error' ? 'bg-rose-50 text-rose-600 border-rose-200' :
+                'bg-slate-100 text-slate-400 border-slate-200'
+              }`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  syncStatus === 'syncing' ? 'bg-amber-500 animate-pulse' :
+                  syncStatus === 'done' ? 'bg-emerald-500' :
+                  syncStatus === 'error' ? 'bg-rose-500' : 'bg-slate-400'
+                }`} />
+                {syncStatus === 'syncing' ? '동기화 중...' : 
+                 syncStatus === 'done' ? '클라우드 동기화 완료' : 
+                 syncStatus === 'error' ? '동기화 오류' : '연결됨'}
+              </div>
+            </div>
           </div>
           <button 
             onClick={handleReset}
@@ -765,31 +801,99 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      <div className="mt-12 flex flex-col items-center gap-6 pb-20">
+        <CompanySelector 
+          companies={companies} 
+          activeId={activeCompanyId} 
+          onSelect={setActiveCompanyId} 
+          onAdd={handleAddCompany}
+          onDelete={handleDeleteCompany}
+          onRename={handleRenameCompany}
+        />
+        <p className="text-slate-400 text-[10px] font-black tracking-[0.2em] uppercase">Premium Business Management System</p>
+      </div>
     </div>
   );
 }
 
-function SummaryCard({ icon, color, label, value }: { icon: React.ReactNode, color: string, label: string, value: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600",
-    orange: "bg-orange-50 text-orange-600",
-    red: "bg-red-50 text-red-600",
-    green: "bg-green-50 text-green-600",
-    purple: "bg-purple-50 text-purple-600",
+function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: string, color: 'blue' | 'orange' | 'green' | 'red' }) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    green: "bg-emerald-50 text-emerald-600 border-emerald-100",
+    red: "bg-red-50 text-red-600 border-red-100",
   };
+
   return (
-    <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem]">
-      <CardContent className="p-8">
-        <div className="flex items-center gap-5">
-          <div className={`p-4 ${colors[color]} rounded-[1.25rem] shadow-sm`}>
-            {React.cloneElement(icon as React.ReactElement, { size: 28 })}
+    <Card className="border-none shadow-lg shadow-slate-200/50 rounded-3xl overflow-hidden transition-all hover:scale-[1.02]">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-4">
+          <div className={`p-3 rounded-2xl ${colors[color]} border`}>
+            {React.cloneElement(icon as React.ReactElement, { className: "w-6 h-6" })}
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">{value}</h3>
+            <p className="text-xl font-black text-slate-900">{value}</p>
           </div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CompanySelector({ companies, activeId, onSelect, onAdd, onDelete, onRename }: { 
+  companies: Company[], 
+  activeId: string, 
+  onSelect: (id: string) => void,
+  onAdd: () => void,
+  onDelete: () => void,
+  onRename: (id: string, name: string) => void
+}) {
+  const activeCompany = companies.find(c => c.id === activeId);
+
+  return (
+    <div className="flex flex-col items-center gap-4 w-full max-w-md">
+      <div className="flex items-center gap-2 w-full">
+        <div className="relative flex-1 group">
+          <select 
+            value={activeId} 
+            onChange={(e) => onSelect(e.target.value)}
+            className="w-full bg-white border-2 border-slate-200 rounded-2xl py-4 px-6 font-black text-slate-900 appearance-none cursor-pointer focus:border-blue-500 outline-none transition-all pr-12 shadow-sm"
+          >
+            {companies.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 rotate-90" />
+        </div>
+        <button 
+          onClick={onAdd}
+          className="p-4 bg-white border-2 border-slate-200 rounded-2xl text-slate-600 hover:border-blue-500 hover:text-blue-500 transition-all shadow-sm"
+          title="업체 추가"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      </div>
+      
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => {
+            const newName = window.prompt("새로운 업체 이름을 입력하세요:", activeCompany?.name);
+            if (newName && newName.trim()) onRename(activeId, newName.trim());
+          }}
+          className="text-[10px] font-black text-slate-400 hover:text-blue-500 transition-colors uppercase tracking-widest"
+        >
+          업체명 수정
+        </button>
+        <span className="w-1 h-1 rounded-full bg-slate-200" />
+        <button 
+          onClick={onDelete}
+          className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-colors uppercase tracking-widest"
+        >
+          업체 삭제
+        </button>
+      </div>
+    </div>
   );
 }
