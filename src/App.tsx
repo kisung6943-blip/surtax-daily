@@ -798,31 +798,99 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      <div className="mt-12 flex flex-col items-center gap-6 pb-20">
+        <CompanySelector 
+          companies={companies} 
+          activeId={activeCompanyId} 
+          onSelect={setActiveCompanyId} 
+          onAdd={handleAddCompany}
+          onDelete={handleDeleteCompany}
+          onRename={handleRenameCompany}
+        />
+        <p className="text-slate-400 text-[10px] font-black tracking-[0.2em] uppercase">Premium Business Management System</p>
+      </div>
     </div>
   );
 }
 
-function SummaryCard({ icon, color, label, value }: { icon: React.ReactNode, color: string, label: string, value: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600",
-    orange: "bg-orange-50 text-orange-600",
-    red: "bg-red-50 text-red-600",
-    green: "bg-green-50 text-green-600",
-    purple: "bg-purple-50 text-purple-600",
+function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: string, color: 'blue' | 'orange' | 'green' | 'red' }) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    green: "bg-emerald-50 text-emerald-600 border-emerald-100",
+    red: "bg-red-50 text-red-600 border-red-100",
   };
+
   return (
-    <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem]">
-      <CardContent className="p-8">
-        <div className="flex items-center gap-5">
-          <div className={`p-4 ${colors[color]} rounded-[1.25rem] shadow-sm`}>
-            {React.cloneElement(icon as React.ReactElement, { size: 28 })}
+    <Card className="border-none shadow-lg shadow-slate-200/50 rounded-3xl overflow-hidden transition-all hover:scale-[1.02]">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-4">
+          <div className={`p-3 rounded-2xl ${colors[color]} border`}>
+            {React.cloneElement(icon as React.ReactElement, { className: "w-6 h-6" })}
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">{value}</h3>
+            <p className="text-xl font-black text-slate-900">{value}</p>
           </div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CompanySelector({ companies, activeId, onSelect, onAdd, onDelete, onRename }: { 
+  companies: Company[], 
+  activeId: string, 
+  onSelect: (id: string) => void,
+  onAdd: () => void,
+  onDelete: () => void,
+  onRename: (id: string, name: string) => void
+}) {
+  const activeCompany = companies.find(c => c.id === activeId);
+
+  return (
+    <div className="flex flex-col items-center gap-4 w-full max-w-md">
+      <div className="flex items-center gap-2 w-full">
+        <div className="relative flex-1 group">
+          <select 
+            value={activeId} 
+            onChange={(e) => onSelect(e.target.value)}
+            className="w-full bg-white border-2 border-slate-200 rounded-2xl py-4 px-6 font-black text-slate-900 appearance-none cursor-pointer focus:border-blue-500 outline-none transition-all pr-12 shadow-sm"
+          >
+            {companies.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 rotate-90" />
+        </div>
+        <button 
+          onClick={onAdd}
+          className="p-4 bg-white border-2 border-slate-200 rounded-2xl text-slate-600 hover:border-blue-500 hover:text-blue-500 transition-all shadow-sm"
+          title="업체 추가"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      </div>
+      
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => {
+            const newName = window.prompt("새로운 업체 이름을 입력하세요:", activeCompany?.name);
+            if (newName && newName.trim()) onRename(activeId, newName.trim());
+          }}
+          className="text-[10px] font-black text-slate-400 hover:text-blue-500 transition-colors uppercase tracking-widest"
+        >
+          업체명 수정
+        </button>
+        <span className="w-1 h-1 rounded-full bg-slate-200" />
+        <button 
+          onClick={onDelete}
+          className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-colors uppercase tracking-widest"
+        >
+          업체 삭제
+        </button>
+      </div>
+    </div>
   );
 }
