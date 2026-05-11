@@ -25,7 +25,8 @@ type Expense = {
 type MonthData = {
   month: number;
   revenues: RevenueEntry[];
-  expenses: Expense[];
+  expenses: Expense[]; // 매입
+  expenditures: Expense[]; // 지출
 };
 
 type Company = {
@@ -37,6 +38,7 @@ const getInitialData = (): MonthData[] => Array.from({ length: 12 }, (_, i) => (
   month: i + 1,
   revenues: [],
   expenses: [],
+  expenditures: [],
 }));
 
 export default function App() {
@@ -50,6 +52,7 @@ export default function App() {
   const [data, setData] = useState<MonthData[]>(getInitialData());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [isLoading, setIsLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
 
   // Initial Authentication Check
   React.useEffect(() => {
@@ -73,15 +76,21 @@ export default function App() {
   const [newRevCategory, setNewRevCategory] = useState<RevenueCategory>("계산서 매출");
   const [newRevDay, setNewRevDay] = useState(new Date().getDate().toString().padStart(2, '0'));
 
-  // Expense form state
+  // Expense (Purchase) form state
   const [newExpVendor, setNewExpVendor] = useState("");
   const [newExpAmount, setNewExpAmount] = useState("");
   const [newExpDay, setNewExpDay] = useState(new Date().getDate().toString().padStart(2, '0'));
+
+  // Expenditure form state
+  const [newExpenVendor, setNewExpenVendor] = useState("");
+  const [newExpenAmount, setNewExpenAmount] = useState("");
+  const [newExpenDay, setNewExpenDay] = useState(new Date().getDate().toString().padStart(2, '0'));
 
   // Initial Load (Companies from Supabase)
   useEffect(() => {
     const fetchCompanies = async () => {
       setIsLoading(true);
+      setSyncStatus('syncing');
       try {
         const { data: dbCompanies, error } = await supabase
           .from('surtax_daily_companies')
@@ -104,8 +113,10 @@ export default function App() {
             setActiveCompanyId(defaultId);
           }
         }
+        setSyncStatus('done');
       } catch (e) {
         console.error("Fetch companies failed", e);
+        setSyncStatus('error');
       } finally {
         setIsLoading(false);
       }
@@ -121,6 +132,7 @@ export default function App() {
     const fetchData = async () => {
       if (!activeCompanyId) return;
       
+      setSyncStatus('syncing');
       localStorage.setItem("surtax_daily_active_id", activeCompanyId);
       try {
         const { data: dbData, error } = await supabase
@@ -134,10 +146,18 @@ export default function App() {
         if (dbData) {
           setData(dbData.month_data);
         } else {
-          setData(getInitialData());
+          // Fallback to local storage if available for this company
+          const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+          if (localSaved) {
+            setData(JSON.parse(localSaved));
+          } else {
+            setData(getInitialData());
+          }
         }
+        setSyncStatus('done');
       } catch (e) {
         console.error("Fetch data failed", e);
+        setSyncStatus('error');
         setData(getInitialData());
       }
     };
@@ -150,24 +170,32 @@ export default function App() {
   // Auto-save data to Supabase when it changes
   useEffect(() => {
     const saveData = async () => {
-      if (!activeCompanyId || !isAuthenticated) return;
+      if (!activeCompanyId || !isAuthenticated || isLoading) return;
       
+      setSyncStatus('syncing');
       try {
-        await supabase
+        // Save to LocalStorage first for immediate persist
+        localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(data));
+
+        const { error } = await supabase
           .from('surtax_daily_data')
           .upsert({ 
             company_id: activeCompanyId, 
             month_data: data,
             updated_at: new Date().toISOString()
           });
+
+        if (error) throw error;
+        setSyncStatus('done');
       } catch (e) {
         console.error("Save data failed", e);
+        setSyncStatus('error');
       }
     };
 
-    const timeoutId = setTimeout(saveData, 1000); // Debounce saves
+    const timeoutId = setTimeout(saveData, 1500); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [data, activeCompanyId, isAuthenticated]);
+  }, [data, activeCompanyId, isAuthenticated, isLoading]);
 
   const handleAddCompany = async () => {
     const name = window.prompt("새 업체 이름을 입력하세요:");
@@ -331,24 +359,61 @@ export default function App() {
     }));
   };
 
-  // Calculations
-  const calculateTotalRevenue = (revenues: RevenueEntry[]) => revenues.reduce((sum, r) => sum + r.amount, 0);
-  const calculateTotalExpense = (expenses: Expense[]) => expenses.reduce((sum, e) => sum + e.amount, 0);
+  // Expenditure Handlers
+  const handleAddExpenditure = (month: number) => {
+    if (!newExpenVendor.trim() || !newExpenAmount.trim()) return;
+    const amount = parseInt(newExpenAmount.replace(/[^0-9]/g, ""), 10) || 0;
 
-  const yearlyRevenue = useMemo(() => data.reduce((sum, m) => sum + calculateTotalRevenue(m.revenues || []), 0), [data]);
-  const yearlyExpense = useMemo(() => data.reduce((sum, m) => sum + calculateTotalExpense(m.expenses || []), 0), [data]);
-  const yearlyNetProfit = yearlyRevenue - yearlyExpense;
-  const yearlyExpenseRatio = yearlyRevenue > 0 ? (yearlyExpense / yearlyRevenue) * 100 : 0;
+    setData(prev => prev.map(d => {
+      if (d.month === month) {
+        return {
+          ...d,
+          expenditures: [...(d.expenditures || []), { 
+            id: Date.now().toString() + Math.random().toString(), 
+            vendor: newExpenVendor.trim(), 
+            amount,
+            date: newExpenDay.padStart(2, '0')
+          }].sort((a, b) => a.date.localeCompare(b.date))
+        };
+      }
+      return d;
+    }));
+    setNewExpenVendor("");
+    setNewExpenAmount("");
+  };
+
+  const handleRemoveExpenditure = (month: number, expenditureId: string) => {
+    setData(prev => prev.map(d => {
+      if (d.month === month) {
+        return {
+          ...d,
+          expenditures: d.expenditures.filter(e => e.id !== expenditureId)
+        };
+      }
+      return d;
+    }));
+  };
+
+  // Calculations
+  const calculateTotal = (items: any[]) => items?.reduce((sum, r) => sum + r.amount, 0) || 0;
+
+  const yearlyRevenue = useMemo(() => data.reduce((sum, m) => sum + calculateTotal(m.revenues), 0), [data]);
+  const yearlyExpense = useMemo(() => data.reduce((sum, m) => sum + calculateTotal(m.expenses), 0), [data]);
+  const yearlyExpenditure = useMemo(() => data.reduce((sum, m) => sum + calculateTotal(m.expenditures), 0), [data]);
+  const yearlyNetProfit = yearlyRevenue - (yearlyExpense + yearlyExpenditure);
+  const yearlyExpenseRatio = yearlyRevenue > 0 ? ((yearlyExpense + yearlyExpenditure) / yearlyRevenue) * 100 : 0;
 
   const chartData = useMemo(() => data.map(m => ({
     month: m.month,
-    revenue: calculateTotalRevenue(m.revenues || []),
-    expense: calculateTotalExpense(m.expenses || []),
+    revenue: calculateTotal(m.revenues),
+    expense: calculateTotal(m.expenses),
+    expenditure: calculateTotal(m.expenditures),
   })), [data]);
 
   const currentMonthData = data.find(d => d.month === selectedMonth)!;
-  const currentMonthRevenue = calculateTotalRevenue(currentMonthData.revenues || []);
-  const currentMonthExpenseTotal = calculateTotalExpense(currentMonthData.expenses || []);
+  const currentMonthRevenue = calculateTotal(currentMonthData.revenues);
+  const currentMonthExpenseTotal = calculateTotal(currentMonthData.expenses);
+  const currentMonthExpenditureTotal = calculateTotal(currentMonthData.expenditures);
   const currentMonthExpenseRatio = currentMonthRevenue > 0 ? (currentMonthExpenseTotal / currentMonthRevenue) * 100 : 0;
 
   if (!isAuthenticated) {
@@ -414,7 +479,7 @@ export default function App() {
               <h1 className="text-3xl font-black tracking-tight text-slate-900 whitespace-nowrap">일별 매출/매입 장부</h1>
               
               <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-2xl px-4 py-2 shadow-sm">
-                <span className="text-lg font-bold text-blue-600">(ES)</span>
+                <span className="text-lg font-bold text-blue-600">bukuk</span>
               </div>
 
               <div className="flex items-center gap-2">
@@ -427,7 +492,24 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <p className="text-slate-500 mt-2">일별 매출 내역(계산서/현금영수증/기타)을 상세하게 기록하세요.</p>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-slate-500">일별 매출 내역(계산서/현금영수증/기타)을 상세하게 기록하세요.</p>
+              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black border transition-all ${
+                syncStatus === 'syncing' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                syncStatus === 'done' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+                syncStatus === 'error' ? 'bg-rose-50 text-rose-600 border-rose-200' :
+                'bg-slate-100 text-slate-400 border-slate-200'
+              }`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  syncStatus === 'syncing' ? 'bg-amber-500 animate-pulse' :
+                  syncStatus === 'done' ? 'bg-emerald-500' :
+                  syncStatus === 'error' ? 'bg-rose-500' : 'bg-slate-400'
+                }`} />
+                {syncStatus === 'syncing' ? '동기화 중...' : 
+                 syncStatus === 'done' ? '클라우드 동기화 완료' : 
+                 syncStatus === 'error' ? '동기화 오류' : '연결됨'}
+              </div>
+            </div>
           </div>
           <button 
             onClick={handleReset}
@@ -440,9 +522,9 @@ export default function App() {
         {/* Yearly Summary */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <SummaryCard icon={<TrendingUp />} color="blue" label="연간 총 매출액" value={formatCurrency(yearlyRevenue)} />
-          <SummaryCard icon={<TrendingDown />} color="red" label="연간 총 매입액" value={formatCurrency(yearlyExpense)} />
+          <SummaryCard icon={<TrendingDown />} color="orange" label="연간 총 매입액" value={formatCurrency(yearlyExpense)} />
+          <SummaryCard icon={<TrendingDown />} color="red" label="연간 총 지출액" value={formatCurrency(yearlyExpenditure)} />
           <SummaryCard icon={<DollarSign />} color="green" label="연간 순이익" value={formatCurrency(yearlyNetProfit)} />
-          <SummaryCard icon={<Percent />} color="purple" label="연간 매입 비율" value={`${yearlyExpenseRatio.toFixed(1)}%`} />
         </div>
 
         {/* Chart */}
@@ -459,8 +541,9 @@ export default function App() {
                   <YAxis tickFormatter={(val) => new Intl.NumberFormat('ko-KR', { notation: 'compact' }).format(val)} axisLine={false} tickLine={false} />
                   <Tooltip cursor={{fill: '#f8fafc'}} formatter={(value: number) => formatCurrency(value)} labelFormatter={(label) => `${label}월`} />
                   <Legend />
-                  <Bar dataKey="revenue" name="매출액" fill="#3B82F6" radius={[6, 6, 0, 0]} barSize={32} />
-                  <Bar dataKey="expense" name="매입액" fill="#EF4444" radius={[6, 6, 0, 0]} barSize={32} />
+                  <Bar dataKey="revenue" name="매출액" fill="#3B82F6" radius={[6, 6, 0, 0]} barSize={24} />
+                  <Bar dataKey="expense" name="매입액" fill="#F59E0B" radius={[6, 6, 0, 0]} barSize={24} />
+                  <Bar dataKey="expenditure" name="지출액" fill="#EF4444" radius={[6, 6, 0, 0]} barSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -485,7 +568,7 @@ export default function App() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Revenue Input & List */}
             <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem] overflow-hidden">
               <CardHeader className="bg-slate-900 text-white pb-6 pt-8">
@@ -640,33 +723,174 @@ export default function App() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Expenditure Input & List */}
+            <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem] overflow-hidden">
+              <CardHeader className="bg-white border-b border-slate-100 pb-6 pt-8">
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-xl font-black flex items-center gap-2">
+                    <TrendingDown className="w-6 h-6 text-red-500" />
+                    {selectedMonth}월 지출 상세 기록
+                  </CardTitle>
+                  <span className="text-xl font-black text-red-500">
+                    {formatCurrency(currentMonthExpenditureTotal)}
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-8 px-6 pb-8">
+                <form 
+                  onSubmit={(e) => { e.preventDefault(); handleAddExpenditure(selectedMonth); }} 
+                  className="space-y-4 mb-8 bg-slate-50 p-6 rounded-3xl border border-slate-100"
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">날짜(일)</label>
+                      <select 
+                        value={newExpenDay} 
+                        onChange={(e) => setNewExpenDay(e.target.value)} 
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-bold appearance-none cursor-pointer"
+                      >
+                        {Array.from({ length: new Date(2026, selectedMonth, 0).getDate() }, (_, i) => (
+                          <option key={i + 1} value={(i + 1).toString().padStart(2, '0')}>
+                            {(i + 1).toString().padStart(2, '0')}일
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">지출 항목</label>
+                      <input type="text" value={newExpenVendor} onChange={(e) => setNewExpenVendor(e.target.value)} placeholder="지출처/항목 입력" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-bold" />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">지출 금액</label>
+                    <div className="relative">
+                      <input type="text" value={newExpenAmount ? parseInt(newExpenAmount.replace(/[^0-9]/g, "")).toLocaleString() : ""} onChange={(e) => setNewExpenAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none font-black text-lg text-right pr-12" />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">원</span>
+                    </div>
+                  </div>
+                  <button type="submit" disabled={!newExpenVendor.trim() || !newExpenAmount.trim()} className="w-full py-4 bg-red-500 text-white rounded-xl font-black hover:bg-red-600 disabled:opacity-50 transition shadow-lg shadow-red-600/20">지출 내역 추가</button>
+                </form>
+
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1 mb-2">이달의 지출 리스트</h4>
+                  {currentMonthData.expenditures?.length > 0 ? (
+                    <div className="space-y-2">
+                      {currentMonthData.expenditures.map((ex) => (
+                        <div key={ex.id} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl hover:border-red-200 transition-colors group">
+                          <div className="flex items-center gap-4">
+                            <span className="text-xs font-black text-slate-300 w-6">{ex.date}일</span>
+                            <span className="font-bold text-sm text-slate-800">{ex.vendor}</span>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="font-black text-slate-900">{formatCurrency(ex.amount)}</span>
+                            <button onClick={() => handleRemoveExpenditure(selectedMonth, ex.id)} className="p-1.5 text-slate-200 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 bg-slate-50 rounded-3xl border border-dashed border-slate-200 text-slate-400 text-sm font-bold">등록된 지출이 없습니다.</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
+      </div>
+
+      <div className="mt-12 flex flex-col items-center gap-6 pb-20">
+        <CompanySelector 
+          companies={companies} 
+          activeId={activeCompanyId} 
+          onSelect={setActiveCompanyId} 
+          onAdd={handleAddCompany}
+          onDelete={handleDeleteCompany}
+          onRename={handleRenameCompany}
+        />
+        <p className="text-slate-400 text-[10px] font-black tracking-[0.2em] uppercase">Premium Business Management System</p>
       </div>
     </div>
   );
 }
 
-function SummaryCard({ icon, color, label, value }: { icon: React.ReactNode, color: string, label: string, value: string }) {
-  const colors: Record<string, string> = {
-    blue: "bg-blue-50 text-blue-600",
-    red: "bg-red-50 text-red-600",
-    green: "bg-green-50 text-green-600",
-    purple: "bg-purple-50 text-purple-600",
+function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: string, color: 'blue' | 'orange' | 'green' | 'red' }) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600 border-blue-100",
+    orange: "bg-orange-50 text-orange-600 border-orange-100",
+    green: "bg-emerald-50 text-emerald-600 border-emerald-100",
+    red: "bg-red-50 text-red-600 border-red-100",
   };
+
   return (
-    <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem]">
-      <CardContent className="p-8">
-        <div className="flex items-center gap-5">
-          <div className={`p-4 ${colors[color]} rounded-[1.25rem] shadow-sm`}>
-            {React.cloneElement(icon as React.ReactElement, { size: 28 })}
+    <Card className="border-none shadow-lg shadow-slate-200/50 rounded-3xl overflow-hidden transition-all hover:scale-[1.02]">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-4">
+          <div className={`p-3 rounded-2xl ${colors[color]} border`}>
+            {React.cloneElement(icon as React.ReactElement, { className: "w-6 h-6" })}
           </div>
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">{value}</h3>
+            <p className="text-xl font-black text-slate-900">{value}</p>
           </div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CompanySelector({ companies, activeId, onSelect, onAdd, onDelete, onRename }: { 
+  companies: Company[], 
+  activeId: string, 
+  onSelect: (id: string) => void,
+  onAdd: () => void,
+  onDelete: () => void,
+  onRename: (id: string, name: string) => void
+}) {
+  const activeCompany = companies.find(c => c.id === activeId);
+
+  return (
+    <div className="flex flex-col items-center gap-4 w-full max-w-md">
+      <div className="flex items-center gap-2 w-full">
+        <div className="relative flex-1 group">
+          <select 
+            value={activeId} 
+            onChange={(e) => onSelect(e.target.value)}
+            className="w-full bg-white border-2 border-slate-200 rounded-2xl py-4 px-6 font-black text-slate-900 appearance-none cursor-pointer focus:border-blue-500 outline-none transition-all pr-12 shadow-sm"
+          >
+            {companies.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 rotate-90" />
+        </div>
+        <button 
+          onClick={onAdd}
+          className="p-4 bg-white border-2 border-slate-200 rounded-2xl text-slate-600 hover:border-blue-500 hover:text-blue-500 transition-all shadow-sm"
+          title="업체 추가"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      </div>
+      
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => {
+            const newName = window.prompt("새로운 업체 이름을 입력하세요:", activeCompany?.name);
+            if (newName && newName.trim()) onRename(activeId, newName.trim());
+          }}
+          className="text-[10px] font-black text-slate-400 hover:text-blue-500 transition-colors uppercase tracking-widest"
+        >
+          업체명 수정
+        </button>
+        <span className="w-1 h-1 rounded-full bg-slate-200" />
+        <button 
+          onClick={onDelete}
+          className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-colors uppercase tracking-widest"
+        >
+          업체 삭제
+        </button>
+      </div>
+    </div>
   );
 }
