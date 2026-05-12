@@ -143,8 +143,15 @@ export default function App() {
 
         if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
 
-        if (dbData) {
-          setData(dbData.month_data);
+        if (dbData && Array.isArray(dbData.month_data)) {
+          // Migration/Safety: Ensure each month object has all required properties
+          const safeData = dbData.month_data.map((m: any) => ({
+            month: m.month,
+            revenues: Array.isArray(m.revenues) ? m.revenues : [],
+            expenses: Array.isArray(m.expenses) ? m.expenses : (Array.isArray(m.purchases) ? m.purchases : []),
+            expenditures: Array.isArray(m.expenditures) ? m.expenditures : [],
+          }));
+          setData(safeData);
         } else {
           // Fallback to local storage if available for this company
           const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
@@ -410,10 +417,10 @@ export default function App() {
     expenditure: calculateTotal(m.expenditures),
   })), [data]);
 
-  const currentMonthData = data.find(d => d.month === selectedMonth)!;
-  const currentMonthRevenue = calculateTotal(currentMonthData.revenues);
-  const currentMonthExpenseTotal = calculateTotal(currentMonthData.expenses);
-  const currentMonthExpenditureTotal = calculateTotal(currentMonthData.expenditures);
+  const currentMonthData = data.find(d => d.month === selectedMonth) || getInitialData()[0];
+  const currentMonthRevenue = calculateTotal(currentMonthData?.revenues || []);
+  const currentMonthExpenseTotal = calculateTotal(currentMonthData?.expenses || []);
+  const currentMonthExpenditureTotal = calculateTotal(currentMonthData?.expenditures || []);
   const currentMonthExpenseRatio = currentMonthRevenue > 0 ? (currentMonthExpenseTotal / currentMonthRevenue) * 100 : 0;
 
   if (!isAuthenticated) {
