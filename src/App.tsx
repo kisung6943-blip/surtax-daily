@@ -409,6 +409,7 @@ export default function App() {
   const yearlyExpenditure = useMemo(() => data.reduce((sum, m) => sum + calculateTotal(m.expenditures), 0), [data]);
   const yearlyNetProfit = yearlyRevenue - (yearlyExpense + yearlyExpenditure);
   const yearlyExpenseRatio = yearlyRevenue > 0 ? ((yearlyExpense + yearlyExpenditure) / yearlyRevenue) * 100 : 0;
+  const yearlyPurchaseRate = yearlyRevenue > 0 ? (yearlyExpense / yearlyRevenue) * 100 : 0;
 
   const chartData = useMemo(() => data.map(m => ({
     month: m.month,
@@ -526,12 +527,12 @@ export default function App() {
           </button>
         </header>
 
-        {/* Yearly Summary */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
           <SummaryCard icon={<TrendingUp />} color="blue" label="연간 총 매출액" value={formatCurrency(yearlyRevenue)} />
           <SummaryCard icon={<TrendingDown />} color="orange" label="연간 총 매입액" value={formatCurrency(yearlyExpense)} />
           <SummaryCard icon={<TrendingDown />} color="red" label="연간 총 지출액" value={formatCurrency(yearlyExpenditure)} />
           <SummaryCard icon={<DollarSign />} color="green" label="연간 순이익" value={formatCurrency(yearlyNetProfit)} />
+          <SummaryCard icon={<Percent />} color="purple" label="연간 매입률" value={`${yearlyPurchaseRate.toFixed(1)}%`} />
         </div>
 
         {/* Chart */}
@@ -575,7 +576,7 @@ export default function App() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
             {/* Revenue Input & List */}
             <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem] overflow-hidden">
               <CardHeader className="bg-slate-900 text-white pb-6 pt-8">
@@ -802,6 +803,72 @@ export default function App() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Monthly Analysis Card */}
+            <Card className="border-none shadow-xl shadow-slate-200/50 rounded-[2rem] overflow-hidden flex flex-col">
+              <CardHeader className="bg-slate-900 text-white pb-6 pt-8">
+                <div className="flex justify-between items-center">
+                  <CardTitle className="text-xl font-black flex items-center gap-2">
+                    <Percent className="w-6 h-6 text-purple-400" />
+                    {selectedMonth}월 비율 분석
+                  </CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-8 px-6 pb-8 space-y-6 flex-1 flex flex-col justify-between">
+                <div className="space-y-4">
+                  {/* Monthly Purchase Rate */}
+                  <div className="bg-purple-50 p-6 rounded-3xl border border-purple-100 flex flex-col justify-center items-center text-center">
+                    <span className="text-xs font-black text-purple-400 uppercase tracking-widest mb-1">이달의 매입률</span>
+                    <span className="text-3xl font-black text-purple-700">
+                      {currentMonthRevenue > 0 ? ((currentMonthExpenseTotal / currentMonthRevenue) * 100).toFixed(1) : "0.0"}%
+                    </span>
+                    <div className="w-full bg-purple-200 h-2 rounded-full mt-4 overflow-hidden">
+                      <div 
+                        className="bg-purple-600 h-full rounded-full transition-all duration-500" 
+                        style={{ width: `${Math.min(100, currentMonthRevenue > 0 ? (currentMonthExpenseTotal / currentMonthRevenue) * 100 : 0)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Monthly Expenditure Rate */}
+                  <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 space-y-3">
+                    <div className="flex justify-between items-center text-sm font-bold text-slate-600">
+                      <span>매출 대비 지출 비율</span>
+                      <span className="font-black text-slate-800">
+                        {currentMonthRevenue > 0 ? ((currentMonthExpenditureTotal / currentMonthRevenue) * 100).toFixed(1) : "0.0"}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-red-500 h-full rounded-full transition-all duration-500" 
+                        style={{ width: `${Math.min(100, currentMonthRevenue > 0 ? (currentMonthExpenditureTotal / currentMonthRevenue) * 100 : 0)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Monthly Net Profit Rate */}
+                  <div className="bg-emerald-50 p-5 rounded-3xl border border-emerald-100 space-y-3">
+                    <div className="flex justify-between items-center text-sm font-bold text-emerald-800">
+                      <span>순이익률</span>
+                      <span className="font-black text-emerald-700">
+                        {currentMonthRevenue > 0 ? (((currentMonthRevenue - (currentMonthExpenseTotal + currentMonthExpenditureTotal)) / currentMonthRevenue) * 100).toFixed(1) : "0.0"}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-emerald-200 h-1.5 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                        style={{ width: `${Math.max(0, Math.min(100, currentMonthRevenue > 0 ? ((currentMonthRevenue - (currentMonthExpenseTotal + currentMonthExpenditureTotal)) / currentMonthRevenue) * 100 : 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 space-y-1.5 text-[11px] text-slate-500 leading-relaxed font-semibold mt-4">
+                  <div>• <strong>매입률:</strong> (매입액 / 매출액) × 100</div>
+                  <div>• 적정 매입률(약 60%~80%)을 유지해 보셔요.</div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
@@ -821,12 +888,13 @@ export default function App() {
   );
 }
 
-function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: string, color: 'blue' | 'orange' | 'green' | 'red' }) {
+function SummaryCard({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: string, color: 'blue' | 'orange' | 'green' | 'red' | 'purple' }) {
   const colors = {
     blue: "bg-blue-50 text-blue-600 border-blue-100",
     orange: "bg-orange-50 text-orange-600 border-orange-100",
     green: "bg-emerald-50 text-emerald-600 border-emerald-100",
     red: "bg-red-50 text-red-600 border-red-100",
+    purple: "bg-purple-50 text-purple-600 border-purple-100",
   };
 
   return (
