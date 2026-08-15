@@ -1,3 +1,4 @@
+import DailyCalculator from './components/dailyCalculator/DailyCalculator';
 import React, { useState, useMemo, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock } from "lucide-react";
@@ -883,6 +884,11 @@ export default function App() {
           onRename={handleRenameCompany}
         />
         <p className="text-slate-400 text-[10px] font-black tracking-[0.2em] uppercase">Premium Business Management System</p>
+      </div>
+
+      {/* Daily Calculator (쇼핑몰 일일 정산 및 마진 계산기) Integration Section */}
+      <div className="pt-8 border-t-4 border-indigo-500 rounded-3xl overflow-hidden mt-12 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 mb-12" id="daily-calculator-section">
+        <DailyCalculator />
       </div>
     </div>
   );
