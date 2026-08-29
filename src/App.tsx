@@ -1,7 +1,7 @@
 import DailyCalculator from './components/dailyCalculator/DailyCalculator';
 import React, { useState, useMemo, useEffect } from "react";
 import { supabase } from "./lib/supabase";
-import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock, Download, Upload } from "lucide-react";
+import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock, Download, Upload, History, RotateCcw, Search } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -292,6 +292,67 @@ export default function App() {
         console.error("Reset failed", e);
       }
     }
+  };
+
+  type SavedSnapshot = {
+    key: string;
+    totalRev: number;
+    totalExp: number;
+    count: number;
+    data: MonthData[];
+  };
+
+  const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
+  const [savedSnapshots, setSavedSnapshots] = useState<SavedSnapshot[]>([]);
+
+  const handleOpenRecoveryModal = () => {
+    const list: SavedSnapshot[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith("surtax_daily_data_") || key === "surtax_daily_data")) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              let revSum = 0;
+              let expSum = 0;
+              let entryCount = 0;
+              parsed.forEach((m: any) => {
+                if (Array.isArray(m.revenues)) {
+                  m.revenues.forEach((r: any) => { revSum += r.amount || 0; entryCount++; });
+                }
+                if (Array.isArray(m.expenses)) {
+                  m.expenses.forEach((e: any) => { expSum += e.amount || 0; entryCount++; });
+                }
+                if (Array.isArray(m.expenditures)) {
+                  m.expenditures.forEach((ex: any) => { expSum += ex.amount || 0; entryCount++; });
+                }
+              });
+              list.push({
+                key,
+                totalRev: revSum,
+                totalExp: expSum,
+                count: entryCount,
+                data: parsed
+              });
+            }
+          } catch (e) {}
+        }
+      }
+    }
+    setSavedSnapshots(list);
+    setIsRecoveryModalOpen(true);
+  };
+
+  const handleRestoreSnapshot = (snapshot: SavedSnapshot) => {
+    setData(snapshot.data);
+    const compId = snapshot.key.replace("surtax_daily_data_", "");
+    if (compId && compId !== "surtax_daily_data") {
+      setActiveCompanyId(compId);
+    }
+    setIsRecoveryModalOpen(false);
+    alert(`복원 완료! (총 매출 ${formatCurrency(snapshot.totalRev)}, 총 ${snapshot.count}건 내역)`);
   };
 
   const handleExportBackup = () => {
@@ -599,6 +660,13 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button 
+              onClick={handleOpenRecoveryModal}
+              className="px-3 py-2 text-xs font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-all shadow-sm flex items-center gap-1.5"
+              title="이전 저장 기록 검색 및 복구"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-600" /> 이전 저장 기록 탐색
+            </button>
             <button 
               onClick={handleExportBackup}
               className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 transition-all shadow-sm flex items-center gap-1.5"
@@ -981,6 +1049,54 @@ export default function App() {
       <div className="pt-8 border-t-4 border-indigo-500 rounded-3xl overflow-hidden mt-12 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 mb-12" id="daily-calculator-section">
         <DailyCalculator />
       </div>
+
+      {/* Local Storage Recovery Modal */}
+      {isRecoveryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4 border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h2 className="text-lg font-black flex items-center gap-2 text-slate-800">
+                <RotateCcw className="w-5 h-5 text-amber-500" /> 이전 저장 기록 탐색 및 복구
+              </h2>
+              <button 
+                onClick={() => setIsRecoveryModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-xs font-bold px-2 py-1 bg-slate-100 rounded-lg"
+              >
+                닫기
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-500 leading-relaxed">
+              사용하시는 브라우저의 보관소(LocalStorage)에 남아 있는 모든 입력 기록들입니다. 
+              작성하셨던 내역을 찾아 <strong className="text-blue-600 font-bold">[이 데이터로 복원]</strong> 버튼을 누르시면 즉시 되살아납니다!
+            </p>
+
+            <div className="max-h-80 overflow-y-auto space-y-3 pr-1">
+              {savedSnapshots.length === 0 ? (
+                <p className="text-center text-xs text-slate-400 py-8">저장된 데이터 기록이 존재하지 않습니다.</p>
+              ) : (
+                savedSnapshots.map((snap, idx) => (
+                  <div key={idx} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-4 hover:border-blue-400 transition-all shadow-sm">
+                    <div>
+                      <span className="text-[10px] font-mono text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-full">{snap.key}</span>
+                      <p className="text-sm font-black text-slate-800 mt-1">
+                        총 매출: <span className="text-blue-600">{formatCurrency(snap.totalRev)}</span>
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">입력 항목 총 {snap.count}건 보관됨</p>
+                    </div>
+                    <button
+                      onClick={() => handleRestoreSnapshot(snap)}
+                      className="px-3.5 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm transition-all whitespace-nowrap"
+                    >
+                      이 데이터로 복원
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
