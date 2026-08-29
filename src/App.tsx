@@ -296,10 +296,12 @@ export default function App() {
 
   type SavedSnapshot = {
     key: string;
+    label?: string;
     totalRev: number;
     totalExp: number;
     count: number;
     data: MonthData[];
+    isCurrent?: boolean;
   };
 
   const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
@@ -307,6 +309,33 @@ export default function App() {
 
   const handleOpenRecoveryModal = () => {
     const list: SavedSnapshot[] = [];
+
+    // Calculate current active data sum
+    let activeRevSum = 0;
+    let activeExpSum = 0;
+    let activeCount = 0;
+    data.forEach((m: any) => {
+      if (Array.isArray(m.revenues)) {
+        m.revenues.forEach((r: any) => { activeRevSum += r.amount || 0; activeCount++; });
+      }
+      if (Array.isArray(m.expenses)) {
+        m.expenses.forEach((e: any) => { activeExpSum += e.amount || 0; activeCount++; });
+      }
+      if (Array.isArray(m.expenditures)) {
+        m.expenditures.forEach((ex: any) => { activeExpSum += ex.amount || 0; activeCount++; });
+      }
+    });
+
+    list.push({
+      key: "current_active_data",
+      label: "현재 적용 중인 최신 데이터",
+      totalRev: activeRevSum,
+      totalExp: activeExpSum,
+      count: activeCount,
+      data: data,
+      isCurrent: true
+    });
+
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && (key.startsWith("surtax_daily_data_") || key === "surtax_daily_data")) {
@@ -331,10 +360,12 @@ export default function App() {
               });
               list.push({
                 key,
+                label: `저장 기록 스냅샷 (${key})`,
                 totalRev: revSum,
                 totalExp: expSum,
                 count: entryCount,
-                data: parsed
+                data: parsed,
+                isCurrent: false
               });
             }
           } catch (e) {}
@@ -1076,20 +1107,34 @@ export default function App() {
                 <p className="text-center text-xs text-slate-400 py-8">저장된 데이터 기록이 존재하지 않습니다.</p>
               ) : (
                 savedSnapshots.map((snap, idx) => (
-                  <div key={idx} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-4 hover:border-blue-400 transition-all shadow-sm">
+                  <div key={idx} className={`p-4 rounded-2xl flex items-center justify-between gap-4 transition-all shadow-sm border ${
+                    snap.isCurrent ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200 hover:border-blue-400'
+                  }`}>
                     <div>
-                      <span className="text-[10px] font-mono text-slate-400 bg-slate-200/60 px-2 py-0.5 rounded-full">{snap.key}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          snap.isCurrent ? 'bg-emerald-200 text-emerald-800 font-black' : 'bg-slate-200/60 text-slate-500 font-mono'
+                        }`}>
+                          {snap.isCurrent ? "현재 활성화중 (최신)" : snap.key}
+                        </span>
+                      </div>
                       <p className="text-sm font-black text-slate-800 mt-1">
                         총 매출: <span className="text-blue-600">{formatCurrency(snap.totalRev)}</span>
                       </p>
                       <p className="text-xs text-slate-500 mt-0.5">입력 항목 총 {snap.count}건 보관됨</p>
                     </div>
-                    <button
-                      onClick={() => handleRestoreSnapshot(snap)}
-                      className="px-3.5 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm transition-all whitespace-nowrap"
-                    >
-                      이 데이터로 복원
-                    </button>
+                    {snap.isCurrent ? (
+                      <span className="px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 rounded-xl whitespace-nowrap">
+                        현재 적용 됨
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleRestoreSnapshot(snap)}
+                        className="px-3.5 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm transition-all whitespace-nowrap"
+                      >
+                        이 데이터로 복원
+                      </button>
+                    )}
                   </div>
                 ))
               )}
