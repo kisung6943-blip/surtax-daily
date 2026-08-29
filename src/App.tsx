@@ -88,135 +88,104 @@ export default function App() {
   const [newExpenAmount, setNewExpenAmount] = useState("");
   const [newExpenDay, setNewExpenDay] = useState(new Date().getDate().toString().padStart(2, '0'));
 
-  // Initial Load (Companies from Supabase)
+  // Synchronous Local Load on Mount / Auth + Non-blocking Supabase Sync
   useEffect(() => {
-    const fetchCompanies = async () => {
-      setIsLoading(true);
+    if (!isAuthenticated) return;
+
+    // Step 1: Immediately load local companies and data synchronously from LocalStorage
+    let activeId = localStorage.getItem("surtax_daily_active_id");
+    let loadedCompanies: Company[] = [];
+
+    const localCompStr = localStorage.getItem("surtax_daily_companies");
+    if (localCompStr) {
+      try {
+        const parsed = JSON.parse(localCompStr);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          loadedCompanies = parsed;
+        }
+      } catch (e) {}
+    }
+
+    if (loadedCompanies.length === 0) {
+      // Find any surtax_daily_data_ key in localStorage
+      let foundKeyId: string | null = null;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("surtax_daily_data_")) {
+          foundKeyId = k.replace("surtax_daily_data_", "");
+          break;
+        }
+      }
+      activeId = activeId || foundKeyId || "company_default";
+      loadedCompanies = [{ id: activeId, name: "기본 업체" }];
+    }
+
+    if (!activeId || !loadedCompanies.find(c => c.id === activeId)) {
+      activeId = loadedCompanies[0].id;
+    }
+
+    setCompanies(loadedCompanies);
+    setActiveCompanyId(activeId);
+
+    // Immediately load data for activeId from LocalStorage
+    let localSaved = localStorage.getItem(`surtax_daily_data_${activeId}`);
+    if (!localSaved) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("surtax_daily_data_")) {
+          const val = localStorage.getItem(k);
+          if (val) {
+            try {
+              const parsed = JSON.parse(val);
+              const hasEntries = Array.isArray(parsed) && parsed.some((m: any) => 
+                (m.revenues && m.revenues.length > 0) || 
+                (m.expenses && m.expenses.length > 0) || 
+                (m.expenditures && m.expenditures.length > 0)
+              );
+              if (hasEntries) {
+                localSaved = val;
+                activeId = k.replace("surtax_daily_data_", "");
+                setActiveCompanyId(activeId);
+                break;
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    }
+
+    if (localSaved) {
+      try {
+        setData(JSON.parse(localSaved));
+      } catch (e) {
+        setData(getInitialData());
+      }
+    } else {
+      setData(getInitialData());
+    }
+
+    setIsLoading(false);
+    setIsDataLoaded(true);
+
+    // Step 2: Non-blocking background Supabase sync attempt (2s timeout)
+    const syncWithSupabase = async () => {
       setSyncStatus('syncing');
       try {
-        const { data: dbCompanies, error } = await supabase
-          .from('surtax_daily_companies')
-          .select('*')
-          .order('created_at', { ascending: true });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Supabase Timeout")), 2000)
+        );
+
+        const fetchPromise = supabase.from('surtax_daily_companies').select('*').order('created_at', { ascending: true });
+        const { data: dbCompanies, error }: any = await Promise.race([fetchPromise, timeoutPromise]);
 
         if (error) throw error;
-
         if (dbCompanies && dbCompanies.length > 0) {
           setCompanies(dbCompanies);
-          const savedActiveId = localStorage.getItem("surtax_daily_active_id");
-          setActiveCompanyId(savedActiveId && dbCompanies.find((c: any) => c.id === savedActiveId) ? savedActiveId : dbCompanies[0].id);
-        } else {
-          // Create default company if none exists
-          const defaultId = "company_" + Date.now();
-          const newCompany = { id: defaultId, name: "신규 업체" };
-          const { error: insertError } = await supabase.from('surtax_daily_companies').insert([newCompany]);
-          if (!insertError) {
-            setCompanies([newCompany]);
-            setActiveCompanyId(defaultId);
-          }
         }
-        setSyncStatus('done');
-      } catch (e) {
-        console.error("Fetch companies failed", e);
-        setSyncStatus('error');
-        // Fallback to LocalStorage if Supabase fails
-        const localCompanies = localStorage.getItem("surtax_daily_companies");
-        if (localCompanies) {
-          try {
-            const parsed = JSON.parse(localCompanies);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setCompanies(parsed);
-              const savedActiveId = localStorage.getItem("surtax_daily_active_id");
-              setActiveCompanyId(savedActiveId && parsed.find((c: any) => c.id === savedActiveId) ? savedActiveId : parsed[0].id);
-            }
-          } catch (err) {
-            console.error("Local companies parse error", err);
-          }
-        } else {
-          // Look for any existing surtax_daily_data_ key in localStorage
-          let foundKeyId: string | null = null;
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k && k.startsWith("surtax_daily_data_")) {
-              foundKeyId = k.replace("surtax_daily_data_", "");
-              break;
-            }
-          }
-          const defaultId = foundKeyId || "company_default";
-          const newCompany = { id: defaultId, name: "기본 업체" };
-          setCompanies([newCompany]);
-          setActiveCompanyId(defaultId);
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    };
 
-    if (isAuthenticated) {
-      fetchCompanies();
-    }
-  }, [isAuthenticated]);
-
-  // Load/Save Data for Active Company (Supabase + LocalStorage Fallback)
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!activeCompanyId) return;
-      
-      setIsDataLoaded(false);
-      setSyncStatus('syncing');
-      localStorage.setItem("surtax_daily_active_id", activeCompanyId);
-
-      // Function to load from local storage
-      const loadFromLocal = () => {
-        let localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+        const dataPromise = supabase.from('surtax_daily_data').select('month_data').eq('company_id', activeId).single();
+        const { data: dbData }: any = await Promise.race([dataPromise, timeoutPromise]);
         
-        // Scan for ANY key in localStorage starting with surtax_daily_data_ if active key is missing
-        if (!localSaved) {
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k && k.startsWith("surtax_daily_data_")) {
-              const val = localStorage.getItem(k);
-              if (val) {
-                try {
-                  const parsed = JSON.parse(val);
-                  const hasData = Array.isArray(parsed) && parsed.some((m: any) => 
-                    (m.revenues && m.revenues.length > 0) || 
-                    (m.expenses && m.expenses.length > 0) || 
-                    (m.expenditures && m.expenditures.length > 0)
-                  );
-                  if (hasData) {
-                    localSaved = val;
-                    const compId = k.replace("surtax_daily_data_", "");
-                    setActiveCompanyId(compId);
-                    break;
-                  }
-                } catch (e) {}
-              }
-            }
-          }
-        }
-
-        if (localSaved) {
-          try {
-            setData(JSON.parse(localSaved));
-          } catch (err) {
-            setData(getInitialData());
-          }
-        } else {
-          setData(getInitialData());
-        }
-        setIsDataLoaded(true);
-      };
-
-      try {
-        const { data: dbData, error } = await supabase
-          .from('surtax_daily_data')
-          .select('month_data')
-          .eq('company_id', activeCompanyId)
-          .single();
-
-        if (error && error.code !== 'PGRST116') throw error;
-
         if (dbData && Array.isArray(dbData.month_data)) {
           const safeData = dbData.month_data.map((m: any) => ({
             month: m.month,
@@ -225,23 +194,16 @@ export default function App() {
             expenditures: Array.isArray(m.expenditures) ? m.expenditures : [],
           }));
           setData(safeData);
-          localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(safeData));
-          setIsDataLoaded(true);
-        } else {
-          loadFromLocal();
         }
         setSyncStatus('done');
       } catch (e) {
-        console.error("Fetch data failed from Supabase, loading from LocalStorage", e);
+        // Fast fallback to LocalStorage mode on failure or timeout
         setSyncStatus('error');
-        loadFromLocal();
       }
     };
 
-    if (isAuthenticated) {
-      fetchData();
-    }
-  }, [activeCompanyId, isAuthenticated]);
+    syncWithSupabase();
+  }, [isAuthenticated]);
 
   // Auto-save data to Supabase and LocalStorage when it changes
   useEffect(() => {
