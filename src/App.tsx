@@ -1,7 +1,7 @@
 import DailyCalculator from './components/dailyCalculator/DailyCalculator';
 import React, { useState, useMemo, useEffect } from "react";
 import { supabase } from "./lib/supabase";
-import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock } from "lucide-react";
+import { DollarSign, TrendingDown, TrendingUp, Plus, Trash2, Calendar, Percent, ChevronRight, Lock, KeyRound, Unlock, Download, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -292,6 +292,47 @@ export default function App() {
     }
   };
 
+  const handleExportBackup = () => {
+    const backupData = {
+      version: "1.0",
+      exportDate: new Date().toISOString(),
+      activeCompanyId,
+      companies,
+      data
+    };
+    const jsonStr = JSON.stringify(backupData, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `surtax_daily_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (parsed && Array.isArray(parsed.data)) {
+          setData(parsed.data);
+          if (Array.isArray(parsed.companies) && parsed.companies.length > 0) {
+            setCompanies(parsed.companies);
+          }
+          alert("백업 데이터를 성공적으로 복원했습니다!");
+        } else {
+          alert("올바르지 않은 백업 파일 형식입니다.");
+        }
+      } catch (err) {
+        alert("백업 파일을 읽는 중 오류가 발생했습니다.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleSetPassword = () => {
     if (inputPassword.length < 4) {
       alert("비밀번호는 최소 4자리 이상이어야 합니다.");
@@ -541,26 +582,39 @@ export default function App() {
               <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black border transition-all ${
                 syncStatus === 'syncing' ? 'bg-amber-50 text-amber-600 border-amber-200' :
                 syncStatus === 'done' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-                syncStatus === 'error' ? 'bg-rose-50 text-rose-600 border-rose-200' :
+                syncStatus === 'error' ? 'bg-blue-50 text-blue-600 border-blue-200' :
                 'bg-slate-100 text-slate-400 border-slate-200'
               }`}>
                 <div className={`w-1.5 h-1.5 rounded-full ${
                   syncStatus === 'syncing' ? 'bg-amber-500 animate-pulse' :
                   syncStatus === 'done' ? 'bg-emerald-500' :
-                  syncStatus === 'error' ? 'bg-rose-500' : 'bg-slate-400'
+                  syncStatus === 'error' ? 'bg-blue-500' : 'bg-slate-400'
                 }`} />
                 {syncStatus === 'syncing' ? '동기화 중...' : 
                  syncStatus === 'done' ? '클라우드 동기화 완료' : 
-                 syncStatus === 'error' ? '동기화 오류' : '연결됨'}
+                 syncStatus === 'error' ? '로컬 저장소 저장됨 (안전)' : '연결됨'}
               </div>
             </div>
           </div>
-          <button 
-            onClick={handleReset}
-            className="px-4 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg border border-red-100 transition-colors flex items-center gap-2"
-          >
-            <Trash2 className="w-3 h-3" /> 데이터 초기화
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button 
+              onClick={handleExportBackup}
+              className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 transition-all shadow-sm flex items-center gap-1.5"
+              title="백업 파일 저장"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-600" /> 백업 파일 저장
+            </button>
+            <label className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 transition-all shadow-sm flex items-center gap-1.5 cursor-pointer">
+              <Upload className="w-3.5 h-3.5 text-emerald-600" /> 백업 불러오기
+              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+            </label>
+            <button 
+              onClick={handleReset}
+              className="px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-xl border border-red-100 transition-colors flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> 데이터 초기화
+            </button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
