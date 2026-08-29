@@ -118,6 +118,25 @@ export default function App() {
       } catch (e) {
         console.error("Fetch companies failed", e);
         setSyncStatus('error');
+        // Fallback to LocalStorage if Supabase fails
+        const localCompanies = localStorage.getItem("surtax_daily_companies");
+        if (localCompanies) {
+          try {
+            const parsed = JSON.parse(localCompanies);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setCompanies(parsed);
+              const savedActiveId = localStorage.getItem("surtax_daily_active_id");
+              setActiveCompanyId(savedActiveId && parsed.find((c: any) => c.id === savedActiveId) ? savedActiveId : parsed[0].id);
+            }
+          } catch (err) {
+            console.error("Local companies parse error", err);
+          }
+        } else {
+          const defaultId = "company_default";
+          const newCompany = { id: defaultId, name: "기본 업체" };
+          setCompanies([newCompany]);
+          setActiveCompanyId(defaultId);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -128,13 +147,28 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Load/Save Data for Active Company (Supabase)
+  // Load/Save Data for Active Company (Supabase + LocalStorage Fallback)
   useEffect(() => {
     const fetchData = async () => {
       if (!activeCompanyId) return;
       
       setSyncStatus('syncing');
       localStorage.setItem("surtax_daily_active_id", activeCompanyId);
+
+      // Function to load from local storage
+      const loadFromLocal = () => {
+        const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+        if (localSaved) {
+          try {
+            setData(JSON.parse(localSaved));
+          } catch (err) {
+            setData(getInitialData());
+          }
+        } else {
+          setData(getInitialData());
+        }
+      };
+
       try {
         const { data: dbData, error } = await supabase
           .from('surtax_daily_data')
@@ -142,10 +176,9 @@ export default function App() {
           .eq('company_id', activeCompanyId)
           .single();
 
-        if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
+        if (error && error.code !== 'PGRST116') throw error;
 
         if (dbData && Array.isArray(dbData.month_data)) {
-          // Migration/Safety: Ensure each month object has all required properties
           const safeData = dbData.month_data.map((m: any) => ({
             month: m.month,
             revenues: Array.isArray(m.revenues) ? m.revenues : [],
@@ -153,20 +186,15 @@ export default function App() {
             expenditures: Array.isArray(m.expenditures) ? m.expenditures : [],
           }));
           setData(safeData);
+          localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(safeData));
         } else {
-          // Fallback to local storage if available for this company
-          const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
-          if (localSaved) {
-            setData(JSON.parse(localSaved));
-          } else {
-            setData(getInitialData());
-          }
+          loadFromLocal();
         }
         setSyncStatus('done');
       } catch (e) {
-        console.error("Fetch data failed", e);
+        console.error("Fetch data failed from Supabase, loading from LocalStorage", e);
         setSyncStatus('error');
-        setData(getInitialData());
+        loadFromLocal();
       }
     };
 
@@ -175,16 +203,19 @@ export default function App() {
     }
   }, [activeCompanyId, isAuthenticated]);
 
-  // Auto-save data to Supabase when it changes
+  // Auto-save data to Supabase and LocalStorage when it changes
   useEffect(() => {
     const saveData = async () => {
       if (!activeCompanyId || !isAuthenticated || isLoading) return;
       
       setSyncStatus('syncing');
-      try {
-        // Save to LocalStorage first for immediate persist
-        localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(data));
+      // Save to LocalStorage immediately
+      localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(data));
+      if (companies.length > 0) {
+        localStorage.setItem("surtax_daily_companies", JSON.stringify(companies));
+      }
 
+      try {
         const { error } = await supabase
           .from('surtax_daily_data')
           .upsert({ 
@@ -196,14 +227,14 @@ export default function App() {
         if (error) throw error;
         setSyncStatus('done');
       } catch (e) {
-        console.error("Save data failed", e);
+        console.error("Save data to Supabase failed", e);
         setSyncStatus('error');
       }
     };
 
     const timeoutId = setTimeout(saveData, 1500); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [data, activeCompanyId, isAuthenticated, isLoading]);
+  }, [data, activeCompanyId, isAuthenticated, isLoading, companies]);
 
   const handleAddCompany = async () => {
     const name = window.prompt("새 업체 이름을 입력하세요:");
