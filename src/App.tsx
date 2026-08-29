@@ -53,6 +53,7 @@ export default function App() {
   const [data, setData] = useState<MonthData[]>(getInitialData());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
 
   // Initial Authentication Check
@@ -132,7 +133,16 @@ export default function App() {
             console.error("Local companies parse error", err);
           }
         } else {
-          const defaultId = "company_default";
+          // Look for any existing surtax_daily_data_ key in localStorage
+          let foundKeyId: string | null = null;
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("surtax_daily_data_")) {
+              foundKeyId = k.replace("surtax_daily_data_", "");
+              break;
+            }
+          }
+          const defaultId = foundKeyId || "company_default";
           const newCompany = { id: defaultId, name: "기본 업체" };
           setCompanies([newCompany]);
           setActiveCompanyId(defaultId);
@@ -152,12 +162,40 @@ export default function App() {
     const fetchData = async () => {
       if (!activeCompanyId) return;
       
+      setIsDataLoaded(false);
       setSyncStatus('syncing');
       localStorage.setItem("surtax_daily_active_id", activeCompanyId);
 
       // Function to load from local storage
       const loadFromLocal = () => {
-        const localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+        let localSaved = localStorage.getItem(`surtax_daily_data_${activeCompanyId}`);
+        
+        // Scan for ANY key in localStorage starting with surtax_daily_data_ if active key is missing
+        if (!localSaved) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("surtax_daily_data_")) {
+              const val = localStorage.getItem(k);
+              if (val) {
+                try {
+                  const parsed = JSON.parse(val);
+                  const hasData = Array.isArray(parsed) && parsed.some((m: any) => 
+                    (m.revenues && m.revenues.length > 0) || 
+                    (m.expenses && m.expenses.length > 0) || 
+                    (m.expenditures && m.expenditures.length > 0)
+                  );
+                  if (hasData) {
+                    localSaved = val;
+                    const compId = k.replace("surtax_daily_data_", "");
+                    setActiveCompanyId(compId);
+                    break;
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+        }
+
         if (localSaved) {
           try {
             setData(JSON.parse(localSaved));
@@ -167,6 +205,7 @@ export default function App() {
         } else {
           setData(getInitialData());
         }
+        setIsDataLoaded(true);
       };
 
       try {
@@ -187,6 +226,7 @@ export default function App() {
           }));
           setData(safeData);
           localStorage.setItem(`surtax_daily_data_${activeCompanyId}`, JSON.stringify(safeData));
+          setIsDataLoaded(true);
         } else {
           loadFromLocal();
         }
@@ -206,7 +246,7 @@ export default function App() {
   // Auto-save data to Supabase and LocalStorage when it changes
   useEffect(() => {
     const saveData = async () => {
-      if (!activeCompanyId || !isAuthenticated || isLoading) return;
+      if (!activeCompanyId || !isAuthenticated || isLoading || !isDataLoaded) return;
       
       setSyncStatus('syncing');
       // Save to LocalStorage immediately
@@ -234,7 +274,7 @@ export default function App() {
 
     const timeoutId = setTimeout(saveData, 1500); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [data, activeCompanyId, isAuthenticated, isLoading, companies]);
+  }, [data, activeCompanyId, isAuthenticated, isLoading, isDataLoaded, companies]);
 
   const handleAddCompany = async () => {
     const name = window.prompt("새 업체 이름을 입력하세요:");
